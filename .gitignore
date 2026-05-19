@@ -12,4 +12,19 @@ build
 
 .vercel
 .turbo
-.superpowers
+
+# MCP / 비주얼 브레인스토밍 (로컬 작업용)
+.superpowers/
+.playwright-mcp/
+
+# Playwright MCP가 남기는 스크린샷 (로컬 검증용)
+home.png
+page-*.png
+*.snap.png
+
+# 내부 기획/스펙 문서 (외부 공유 X)
+docs/
+
+# TypeScript 빌드 캐시
+tsconfig.tsbuildinfo
+
