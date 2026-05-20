@@ -1,5 +1,6 @@
--- 밤하늘의 별 (We Are Star) — Supabase schema
--- Supabase Dashboard > SQL Editor 에서 실행
+-- 밤하늘의 별 (We Are Star) — Neon Postgres schema
+-- Neon Dashboard > SQL Editor 에서 순서대로 실행.
+-- (또는 connection string 으로 psql 접속 후 \i db/schema.sql)
 
 SET TIME ZONE 'Asia/Seoul';
 
@@ -85,7 +86,7 @@ DECLARE
   v_slot SMALLINT;
   v_id   BIGINT;
 BEGIN
-  -- Lock the day row to serialize concurrent writers
+  -- 같은 day_id에 동시 접근하는 작성자를 직렬화
   PERFORM 1 FROM days WHERE id = p_day_id FOR UPDATE;
 
   IF EXISTS (SELECT 1 FROM entries WHERE day_id = p_day_id AND author_hash = p_author_hash) THEN
@@ -167,7 +168,6 @@ BEGIN
   ON CONFLICT (date_kst) DO UPDATE SET date_kst = EXCLUDED.date_kst
   RETURNING id INTO v_id;
 
-  -- 좌표 시드
   INSERT INTO star_positions (day_id, slot_number, x_pct, y_pct)
   SELECT v_id,
          (elem->>'slot')::SMALLINT,
@@ -180,28 +180,5 @@ BEGIN
 END;
 $$;
 
--- ────────────────────────────────────────────────────────────────────────────
--- 9. Row Level Security
--- ────────────────────────────────────────────────────────────────────────────
-ALTER TABLE days            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE star_positions  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE entries         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE reports         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE banned_words    ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS days_read       ON days;
-DROP POLICY IF EXISTS positions_read  ON star_positions;
-DROP POLICY IF EXISTS entries_read    ON entries;
-DROP POLICY IF EXISTS reports_block   ON reports;
-DROP POLICY IF EXISTS banned_block    ON banned_words;
-
-CREATE POLICY days_read      ON days            FOR SELECT TO anon, authenticated USING (true);
-CREATE POLICY positions_read ON star_positions  FOR SELECT TO anon, authenticated USING (true);
-CREATE POLICY entries_read   ON entries         FOR SELECT TO anon, authenticated USING (is_deleted = false);
-
--- 쓰기는 service_role 에서만. anon은 RPC 경유 (RPC는 SECURITY DEFINER가 아니므로 service_role로 호출).
-
--- ────────────────────────────────────────────────────────────────────────────
--- 10. 비속어 시드 (정규화된 형태로 저장 — 자모분해 후 자모 시퀀스)
--- ────────────────────────────────────────────────────────────────────────────
--- 시드는 별도 SQL (seeds.sql) 로 분리.
+-- Note: Neon 직접 연결은 superuser 권한으로 접속하므로 RLS 미사용.
+-- 모든 쓰기는 Server Action을 통해서만 들어오고, 입력 검증은 애플리케이션 계층에서 처리.

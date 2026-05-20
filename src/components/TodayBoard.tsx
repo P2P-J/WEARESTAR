@@ -83,7 +83,7 @@ export function TodayBoard({ bundle }: Props) {
         mySlot={mySlot}
         risingSlot={risingSlot}
         onClaimSlot={openWrite}
-        onEntryAction={(e) => setReportTarget(e)}
+        onReport={(e) => setReportTarget(e)}
       />
 
       <div className="text-center mt-2 mb-4">

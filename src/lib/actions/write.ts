@@ -1,6 +1,6 @@
 "use server";
 
-import { supabaseServer, isSupabaseConfigured } from "@/lib/supabase/server";
+import { db, isDbConfigured } from "@/lib/db/client";
 import { authorHash } from "@/lib/fingerprint/server";
 import { normalizeForFilter, findMatchedWord } from "@/lib/profanity/normalize";
 import { ensureDayByDate } from "@/lib/data/day-bundle";
@@ -16,11 +16,11 @@ export async function writeEntry(input: {
   content: string;
   clientFp: string;
 }): Promise<WriteResult> {
-  if (!isSupabaseConfigured()) {
+  if (!isDbConfigured()) {
     return {
       ok: false,
       code: "config",
-      message: "Supabase 환경변수가 설정되지 않았어요. .env.local을 확인해주세요.",
+      message: "DATABASE_URL이 설정되지 않았어요. .env.local을 확인해주세요.",
     };
   }
 
@@ -42,14 +42,21 @@ export async function writeEntry(input: {
 
   // 비속어 체크
   const normalized = normalizeForFilter(raw);
-  const sb = supabaseServer();
-  const { data: dict, error: dictErr } = await sb
-    .from("banned_words")
-    .select("raw, normalized");
-  if (dictErr) {
-    return { ok: false, code: "unknown", message: `사전 조회 실패: ${dictErr.message}` };
+  const sql = db();
+  let dict: { raw: string; normalized: string }[] = [];
+  try {
+    dict = (await sql`SELECT raw, normalized FROM banned_words`) as {
+      raw: string;
+      normalized: string;
+    }[];
+  } catch (e: unknown) {
+    return {
+      ok: false,
+      code: "unknown",
+      message: `사전 조회 실패: ${e instanceof Error ? e.message : String(e)}`,
+    };
   }
-  const hit = findMatchedWord(normalized, dict || []);
+  const hit = findMatchedWord(normalized, dict);
   if (hit) {
     return {
       ok: false,
@@ -62,35 +69,35 @@ export async function writeEntry(input: {
   const day = await ensureDayByDate(todayKstDate());
   const ah = authorHash(input.clientFp, day.id);
 
-  // 슬롯 확보 RPC
-  const { data, error } = await sb.rpc("claim_slot", {
-    p_day_id: day.id,
-    p_author_hash: ah,
-    p_content: raw,
-  });
-
-  if (error) {
-    if (error.message.includes("already_written") || (error as { code?: string }).code === "P0001") {
+  // 슬롯 확보 RPC — 단일 SQL 호출. 함수 내부에서 FOR UPDATE 락 + UNIQUE 제약으로
+  // 11번째 동시 작성을 차단한다.
+  try {
+    const rows = (await sql`
+      SELECT out_slot_number, out_entry_id
+      FROM claim_slot(${day.id}::bigint, ${ah}, ${raw})
+    `) as { out_slot_number: number; out_entry_id: number }[];
+    const row = rows[0];
+    return {
+      ok: true,
+      slot: row?.out_slot_number ?? 0,
+      entryId: row?.out_entry_id ?? 0,
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("already_written")) {
       return {
         ok: false,
         code: "already_written",
         message: "오늘은 이미 한 줄을 남기셨어요. 내일 0시에 새 일기장이 열려요.",
       };
     }
-    if (error.message.includes("day_full") || (error as { code?: string }).code === "P0002") {
+    if (msg.includes("day_full")) {
       return {
         ok: false,
         code: "day_full",
         message: "오늘의 일기장은 모두 채워졌어요. 내일 0시에 새 일기장이 열려요.",
       };
     }
-    return { ok: false, code: "unknown", message: error.message };
+    return { ok: false, code: "unknown", message: msg };
   }
-
-  const row = Array.isArray(data) ? data[0] : data;
-  return {
-    ok: true,
-    slot: row?.out_slot_number ?? 0,
-    entryId: row?.out_entry_id ?? 0,
-  };
 }

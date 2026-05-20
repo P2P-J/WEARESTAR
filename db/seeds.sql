@@ -1,10 +1,8 @@
 -- 비속어 시드 사전
 -- "normalized" 는 src/lib/profanity/normalize.ts 의 정규화와 동일 규칙으로 만들어야 함.
--- 정규화: NFD 분해 → 영문 소문자 → 숫자→자모 치환 → 공백/특수문자 제거 → 자모만 남김
+-- 정규화: NFD 분해 → 호환 자모 → 자모/라틴만 남김
 --
 -- 시드는 의도적으로 짧게 시작하고, /admin 또는 SQL 에디터로 추가.
--- ※ 이 파일은 한국에서 가장 흔히 차단되는 욕설 핵심만 담는다.
---   사전을 확장할 때는 별도 마이그레이션으로 관리할 것.
 
 INSERT INTO banned_words (raw, normalized, category) VALUES
   -- profanity (욕설 핵심)

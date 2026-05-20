@@ -1,6 +1,6 @@
 // 한 일자의 모든 데이터(일자 메타 + 별 위치 + 작성된 entries)를 묶어서 반환.
 
-import { supabaseServer, isSupabaseConfigured } from "@/lib/supabase/server";
+import { db, isDbConfigured } from "@/lib/db/client";
 import { Day, DayBundle, Entry, StarSlot } from "@/lib/types";
 import { generatePositions } from "@/lib/day/positions";
 import {
@@ -10,9 +10,9 @@ import {
   dateFromDayNumber,
 } from "@/lib/day/time";
 
-/** 일자 메타가 없으면 생성하고, 별 좌표도 시드해서 day_id 반환. */
+/** 일자 메타가 없으면 생성하고, 별 좌표도 시드해서 day 반환. */
 export async function ensureDayByDate(dateKst: string): Promise<Day> {
-  const sb = supabaseServer();
+  const sql = db();
   const dayNumber = dayNumberFromDate(dateKst, launchDate());
   const positions = generatePositions(dayNumber).map((p) => ({
     slot: p.slot,
@@ -20,48 +20,55 @@ export async function ensureDayByDate(dateKst: string): Promise<Day> {
     y: Number(p.y.toFixed(2)),
   }));
 
-  const { data, error } = await sb.rpc("ensure_day", {
-    p_date_kst: dateKst,
-    p_day_number: dayNumber,
-    p_positions: positions,
-  });
-  if (error) throw new Error(`ensure_day failed: ${error.message}`);
-  const dayId = data as number;
+  const ensured = (await sql`
+    SELECT ensure_day(${dateKst}::date, ${dayNumber}::int, ${JSON.stringify(positions)}::jsonb) AS id
+  `) as { id: number }[];
 
-  const { data: dayRow, error: e2 } = await sb
-    .from("days")
-    .select("id, day_number, date_kst, opens_at, closes_at")
-    .eq("id", dayId)
-    .single();
-  if (e2 || !dayRow) throw new Error(`day row not found: ${e2?.message ?? "?"}`);
-  return dayRow as Day;
+  const dayId = ensured[0]?.id;
+  if (!dayId) throw new Error("ensure_day returned no id");
+
+  const dayRows = (await sql`
+    SELECT id, day_number, date_kst::text AS date_kst, opens_at::text AS opens_at, closes_at::text AS closes_at
+    FROM days WHERE id = ${dayId}::bigint
+  `) as Day[];
+
+  if (!dayRows[0]) throw new Error("day row not found after ensure_day");
+  return dayRows[0];
 }
 
 /** 일자 묶음(별 위치 + entries) 가져오기. 데이터가 없는 슬롯은 entry=null. */
 export async function getDayBundleByDate(dateKst: string): Promise<DayBundle> {
-  if (!isSupabaseConfigured()) {
-    // 개발 폴백: Supabase 미설정 상태에서도 UI를 볼 수 있게.
+  if (!isDbConfigured()) {
     return mockBundleForDate(dateKst);
   }
 
   const day = await ensureDayByDate(dateKst);
-  const sb = supabaseServer();
+  const sql = db();
 
-  const [{ data: positions }, { data: entries }] = await Promise.all([
-    sb.from("star_positions").select("slot_number, x_pct, y_pct").eq("day_id", day.id),
-    sb
-      .from("entries")
-      .select(
-        "id, day_id, slot_number, content, author_hash, created_at, report_count, is_hidden, is_deleted"
-      )
-      .eq("day_id", day.id)
-      .eq("is_deleted", false),
+  const [positionsRaw, entriesRaw] = await Promise.all([
+    sql`
+      SELECT slot_number, x_pct, y_pct
+      FROM star_positions
+      WHERE day_id = ${day.id}::bigint
+    `,
+    sql`
+      SELECT id, day_id, slot_number, content, author_hash,
+             created_at::text AS created_at, report_count, is_hidden, is_deleted
+      FROM entries
+      WHERE day_id = ${day.id}::bigint AND is_deleted = false
+    `,
   ]);
+  const positions = positionsRaw as unknown as {
+    slot_number: number;
+    x_pct: number;
+    y_pct: number;
+  }[];
+  const entries = entriesRaw as unknown as Entry[];
 
   const entryMap = new Map<number, Entry>();
-  (entries || []).forEach((e) => entryMap.set(e.slot_number, e as Entry));
+  entries.forEach((e) => entryMap.set(e.slot_number, e));
 
-  const slots: StarSlot[] = (positions || [])
+  const slots: StarSlot[] = positions
     .map((p) => ({
       slot: p.slot_number,
       x: Number(p.x_pct),
@@ -94,7 +101,7 @@ export async function getRecentDayBundles(limit = 5, beforeDayNumber?: number): 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 개발 폴백: Supabase 환경변수가 없을 때 표시할 데모 데이터
+// 개발 폴백: DATABASE_URL이 없을 때 데모 데이터로 UI 확인 가능
 // ─────────────────────────────────────────────────────────────────────────────
 function mockBundleForDate(dateKst: string): DayBundle {
   const dayNumber = dayNumberFromDate(dateKst, launchDate());

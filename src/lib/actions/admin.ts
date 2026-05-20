@@ -1,7 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
-import { supabaseServer, isSupabaseConfigured } from "@/lib/supabase/server";
+import { db, isDbConfigured } from "@/lib/db/client";
 
 const COOKIE_KEY = "wearestar_admin";
 
@@ -42,16 +42,28 @@ export async function adminSetEntryFlags(input: {
   isHidden?: boolean;
   isDeleted?: boolean;
 }): Promise<{ ok: boolean; message?: string }> {
-  if (!isSupabaseConfigured()) return { ok: false, message: "Supabase 미설정." };
+  if (!isDbConfigured()) return { ok: false, message: "DATABASE_URL 미설정." };
   if (!(await isAdmin())) return { ok: false, message: "권한 없음." };
 
-  const patch: Record<string, boolean> = {};
-  if (typeof input.isHidden === "boolean") patch.is_hidden = input.isHidden;
-  if (typeof input.isDeleted === "boolean") patch.is_deleted = input.isDeleted;
-  if (Object.keys(patch).length === 0) return { ok: true };
-
-  const sb = supabaseServer();
-  const { error } = await sb.from("entries").update(patch).eq("id", input.entryId);
-  if (error) return { ok: false, message: error.message };
-  return { ok: true };
+  const sql = db();
+  try {
+    if (typeof input.isHidden === "boolean" && typeof input.isDeleted === "boolean") {
+      await sql`
+        UPDATE entries
+        SET is_hidden = ${input.isHidden}, is_deleted = ${input.isDeleted}
+        WHERE id = ${input.entryId}::bigint
+      `;
+    } else if (typeof input.isHidden === "boolean") {
+      await sql`
+        UPDATE entries SET is_hidden = ${input.isHidden} WHERE id = ${input.entryId}::bigint
+      `;
+    } else if (typeof input.isDeleted === "boolean") {
+      await sql`
+        UPDATE entries SET is_deleted = ${input.isDeleted} WHERE id = ${input.entryId}::bigint
+      `;
+    }
+    return { ok: true };
+  } catch (e: unknown) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
 }

@@ -1,7 +1,7 @@
 import { isAdmin } from "@/lib/actions/admin";
 import { AdminLoginForm } from "@/components/AdminLoginForm";
 import { AdminPanel } from "@/components/AdminPanel";
-import { supabaseServer, isSupabaseConfigured } from "@/lib/supabase/server";
+import { db, isDbConfigured } from "@/lib/db/client";
 
 export const dynamic = "force-dynamic";
 
@@ -16,32 +16,21 @@ export default async function AdminPage() {
   }
 
   let reported: AdminEntry[] = [];
-  if (isSupabaseConfigured()) {
-    const sb = supabaseServer();
-    const { data } = await sb
-      .from("entries")
-      .select(
-        "id, day_id, slot_number, content, created_at, report_count, is_hidden, is_deleted, days!inner(day_number, date_kst)"
-      )
-      .or("report_count.gte.1,is_hidden.eq.true,is_deleted.eq.true")
-      .order("report_count", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(100);
-
-    reported = (data || []).map((r) => {
-      const rec = r as unknown as RawAdminEntry;
-      return {
-        id: rec.id,
-        slot_number: rec.slot_number,
-        content: rec.content,
-        created_at: rec.created_at,
-        report_count: rec.report_count,
-        is_hidden: rec.is_hidden,
-        is_deleted: rec.is_deleted,
-        day_number: rec.days.day_number,
-        date_kst: rec.days.date_kst,
-      };
-    });
+  if (isDbConfigured()) {
+    const sql = db();
+    const rows = (await sql`
+      SELECT
+        e.id, e.slot_number, e.content,
+        e.created_at::text AS created_at,
+        e.report_count, e.is_hidden, e.is_deleted,
+        d.day_number, d.date_kst::text AS date_kst
+      FROM entries e
+      JOIN days d ON d.id = e.day_id
+      WHERE e.report_count >= 1 OR e.is_hidden = true OR e.is_deleted = true
+      ORDER BY e.report_count DESC, e.created_at DESC
+      LIMIT 100
+    `) as AdminEntry[];
+    reported = rows;
   }
 
   return (
@@ -75,16 +64,4 @@ export type AdminEntry = {
   is_deleted: boolean;
   day_number: number;
   date_kst: string;
-};
-
-type RawAdminEntry = {
-  id: number;
-  day_id: number;
-  slot_number: number;
-  content: string;
-  created_at: string;
-  report_count: number;
-  is_hidden: boolean;
-  is_deleted: boolean;
-  days: { day_number: number; date_kst: string };
 };

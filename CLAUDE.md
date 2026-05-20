@@ -18,6 +18,7 @@
 
 ## 작업할 때 지킬 것
 
+- DB 는 Neon Postgres. 클라이언트는 `@neondatabase/serverless` 의 HTTP `neon(...)` 함수 (`src/lib/db/client.ts`). Tagged template literal 로 호출하면 자동 파라미터 바인딩.
 - 시간 계산은 절대 `new Date()` 만으로 비교하지 말고 `src/lib/day/time.ts` 의 `todayKstDate()` 등을 거친다.
 - 슬롯/신고는 직접 `entries`/`reports`에 INSERT 하지 말고 RPC (`claim_slot`, `report_entry`) 경유한다 — 동시성과 멱등성이 거기 있다.
 - `banned_words` 정규화는 `normalizeForFilter` 와 항상 같은 규칙으로 만든다. 시드 추가 시 다음 형식 유지:

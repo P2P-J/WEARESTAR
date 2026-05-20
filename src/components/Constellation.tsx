@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Star } from "./Star";
 import { DayBundle, StarSlot } from "@/lib/types";
 import { formatHHMM } from "@/lib/day/time";
@@ -11,8 +11,8 @@ type Props = {
   mySlot?: number | null;
   /** 빈 슬롯 클릭 시 호출 (오늘 페이지에서만 활성) */
   onClaimSlot?: () => void;
-  /** 별을 클릭하면 신고 등 메뉴 등장 */
-  onEntryAction?: (entry: { id: number; content: string }) => void;
+  /** 신고 버튼 클릭 시 호출 — 별 자체 클릭이 아니라 명시적 신고 버튼 */
+  onReport?: (entry: { id: number; content: string }) => void;
   /** 새로 떠오를 슬롯 (애니메이션 트리거) */
   risingSlot?: number | null;
 };
@@ -21,23 +21,21 @@ export function Constellation({
   bundle,
   mySlot,
   onClaimSlot,
-  onEntryAction,
+  onReport,
   risingSlot,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<number | null>(null);
 
-  // 슬롯 정렬: 1..10
   const slots = useMemo(
     () => [...bundle.slots].sort((a, b) => a.slot - b.slot),
     [bundle]
   );
 
-  // 빈 슬롯 placeholder 텍스트 (시각적 다양성)
-  const emptyPlaceholders = useMemo(() => {
-    const opts = ["아직 비어 있는 자리", "누군가의 한 줄을 기다리는 중", "오늘의 마지막 별"];
-    return opts;
-  }, []);
+  const emptyPlaceholders = useMemo(
+    () => ["아직 비어 있는 자리", "누군가의 한 줄을 기다리는 중", "오늘의 마지막 별"],
+    []
+  );
 
   return (
     <div
@@ -57,9 +55,10 @@ export function Constellation({
             ? "🤍 (가려진 글)"
             : s.entry!.content;
 
-        const timeLabel = isFilled
-          ? formatHHMM(s.entry!.created_at)
-          : null;
+        const timeLabel = isFilled ? formatHHMM(s.entry!.created_at) : null;
+
+        const canReport =
+          isFilled && !isMine && !isHidden && !!s.entry && !!onReport;
 
         return (
           <SlotMarker
@@ -71,13 +70,14 @@ export function Constellation({
             risingNow={risingSlot === s.slot}
             isHover={hover === s.slot}
             onHover={(on) => setHover(on ? s.slot : null)}
-            onClick={() => {
-              if (!isFilled && onClaimSlot) {
-                onClaimSlot();
-              } else if (isFilled && !isMine && !isHidden && s.entry && onEntryAction) {
-                onEntryAction({ id: s.entry.id, content: s.entry.content });
-              }
+            onStarClick={() => {
+              if (!isFilled && onClaimSlot) onClaimSlot();
             }}
+            onReportClick={
+              canReport
+                ? () => onReport!({ id: s.entry!.id, content: s.entry!.content })
+                : undefined
+            }
           />
         );
       })}
@@ -93,7 +93,8 @@ function SlotMarker({
   risingNow,
   isHover,
   onHover,
-  onClick,
+  onStarClick,
+  onReportClick,
 }: {
   slot: StarSlot;
   variant: "filled" | "mine" | "empty";
@@ -102,49 +103,87 @@ function SlotMarker({
   risingNow: boolean;
   isHover: boolean;
   onHover: (on: boolean) => void;
-  onClick: () => void;
+  onStarClick: () => void;
+  onReportClick?: () => void;
 }) {
   const x = `${slot.x}%`;
   const y = `${slot.y}%`;
+  const isEmpty = variant === "empty";
 
   return (
-    <button
-      type="button"
+    <div
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
       onFocus={() => onHover(true)}
       onBlur={() => onHover(false)}
-      onClick={onClick}
-      className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 group focus:outline-none"
+      className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1"
       style={{ left: x, top: y }}
-      aria-label={variant === "empty" ? "빈 자리" : `슬롯 ${slot.slot}`}
     >
       {timeLabel && (
         <span className="mono text-[10px] tracking-[0.2em] text-star-soft/80 mb-1">
           {timeLabel}
         </span>
       )}
-      <Star variant={variant} size={variant === "empty" ? 28 : 34} animateRise={risingNow} />
+
+      <button
+        type="button"
+        onClick={onStarClick}
+        disabled={!isEmpty}
+        aria-label={
+          isEmpty
+            ? "빈 자리 — 한 줄 남기기"
+            : variant === "mine"
+              ? "내가 남긴 별"
+              : "다녀간 별"
+        }
+        className={`focus:outline-none ${isEmpty ? "cursor-pointer" : "cursor-default"}`}
+      >
+        <Star variant={variant} size={isEmpty ? 28 : 34} animateRise={risingNow} />
+      </button>
+
       <span
         className={`mt-2 text-center font-serif leading-snug px-2 ${
-          variant === "empty"
+          isEmpty
             ? "text-ink-faint/70 italic"
             : variant === "mine"
               ? "text-[color:var(--star-mine)]"
               : "text-ink-muted"
         }`}
         style={{
-          fontSize: variant === "empty" ? "0.78rem" : "0.82rem",
+          fontSize: isEmpty ? "0.78rem" : "0.82rem",
           maxWidth: 180,
         }}
       >
         {text}
       </span>
-      {isHover && variant !== "empty" && (
+
+      {/* 신고 버튼: 호버 또는 포커스 시에만 표시 */}
+      {onReportClick && (
+        <button
+          type="button"
+          onClick={onReportClick}
+          className={`mono text-[10px] tracking-[0.2em] mt-1.5 px-2 py-1 rounded-full border border-white/15 text-ink-faint hover:text-star hover:border-star/40 transition-opacity ${
+            isHover ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+          aria-label="이 한 줄 신고하기"
+        >
+          신고
+        </button>
+      )}
+
+      {/* 빈 자리 호버 힌트 */}
+      {isEmpty && isHover && (
         <span className="mono text-[9px] tracking-widest text-ink-faint mt-1">
-          {variant === "mine" ? "내 별" : "click — 신고"}
+          click — 한 줄 남기기
         </span>
       )}
-    </button>
+
+      {/* 내 별 표시 */}
+      {variant === "mine" && isHover && (
+        <span className="mono text-[9px] tracking-widest text-[color:var(--star-mine)]/70 mt-1">
+          내 별
+        </span>
+      )}
+    </div>
   );
 }
