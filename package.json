@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "db:apply": "node scripts/apply-schema.mjs"
+    "db:apply": "node scripts/apply-schema.mjs",
+    "db:wipe-days": "node scripts/wipe-days.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",

@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { ArchiveStream } from "@/components/ArchiveStream";
 import { getRecentDayBundles } from "@/lib/data/day-bundle";
+import { todayKstDate, dayNumberFromDate, launchDate } from "@/lib/day/time";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function ArchivePage() {
-  const initial = await getRecentDayBundles(3);
+  const dayNumber = dayNumberFromDate(todayKstDate(), launchDate());
+  const initial = dayNumber >= 1 ? await getRecentDayBundles(3) : [];
 
   return (
     <div className="min-h-svh flex flex-col">
@@ -26,7 +28,13 @@ export default async function ArchivePage() {
           ← BACK TO TODAY
         </Link>
       </header>
-      <ArchiveStream initial={initial} />
+      {initial.length === 0 ? (
+        <p className="px-6 md:px-10 py-20 text-center font-serif text-ink-muted">
+          아직 열린 일기장이 없어요. 첫 일기장은 자정에 열립니다.
+        </p>
+      ) : (
+        <ArchiveStream initial={initial} />
+      )}
     </div>
   );
 }

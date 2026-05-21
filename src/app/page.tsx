@@ -3,14 +3,23 @@ import { TitleBlock } from "@/components/TitleBlock";
 import { StatsRow } from "@/components/StatsRow";
 import { TodayBoard } from "@/components/TodayBoard";
 import { Footer } from "@/components/Footer";
+import { ComingSoon } from "@/components/ComingSoon";
 import { getDayBundleByDate } from "@/lib/data/day-bundle";
-import { todayKstDate } from "@/lib/day/time";
+import { todayKstDate, dayNumberFromDate, launchDate } from "@/lib/day/time";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function Home() {
   const date = todayKstDate();
+  const launch = launchDate();
+  const dayNumber = dayNumberFromDate(date, launch);
+
+  // 사이트 오픈 전 — 첫 일기장이 열리기 전까지 카운트다운 페이지
+  if (dayNumber < 1) {
+    return <ComingSoon launchDateKst={launch} />;
+  }
+
   const bundle = await getDayBundleByDate(date);
   const totalLines = bundle.slots.filter((s) => s.entry && !s.entry.is_deleted).length;
 
