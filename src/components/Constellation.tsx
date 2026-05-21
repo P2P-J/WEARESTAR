@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { Star } from "./Star";
-import { DayBundle, StarSlot } from "@/lib/types";
+import { DayBundle, StarSlot, HIDDEN_CONTENT_MASK } from "@/lib/types";
 import { formatHHMM } from "@/lib/day/time";
 
 type Props = {
@@ -51,7 +51,7 @@ export function Constellation({
 
         const text = !isFilled
           ? emptyPlaceholders[i % emptyPlaceholders.length]
-          : isHidden
+          : isHidden || s.entry!.content === HIDDEN_CONTENT_MASK
             ? "🤍 (가려진 글)"
             : s.entry!.content;
 

@@ -1,6 +1,5 @@
 -- 밤하늘의 별 (We Are Star) — Neon Postgres schema
--- Neon Dashboard > SQL Editor 에서 순서대로 실행.
--- (또는 connection string 으로 psql 접속 후 \i db/schema.sql)
+-- 멱등(CREATE ... IF NOT EXISTS / CREATE OR REPLACE) 이라 재실행 안전.
 
 SET TIME ZONE 'Asia/Seoul';
 
@@ -22,7 +21,7 @@ CREATE INDEX IF NOT EXISTS days_day_number_idx ON days (day_number DESC);
 -- 2. 별자리 좌표 (날짜별 10개, 시드 = day_number)
 -- ────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS star_positions (
-  day_id       BIGINT REFERENCES days(id) ON DELETE CASCADE,
+  day_id       BIGINT NOT NULL REFERENCES days(id) ON DELETE CASCADE,
   slot_number  SMALLINT NOT NULL CHECK (slot_number BETWEEN 1 AND 10),
   x_pct        NUMERIC(5,2) NOT NULL,
   y_pct        NUMERIC(5,2) NOT NULL,
@@ -34,7 +33,7 @@ CREATE TABLE IF NOT EXISTS star_positions (
 -- ────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS entries (
   id              BIGSERIAL PRIMARY KEY,
-  day_id          BIGINT REFERENCES days(id) ON DELETE CASCADE,
+  day_id          BIGINT NOT NULL REFERENCES days(id) ON DELETE CASCADE,
   slot_number     SMALLINT NOT NULL CHECK (slot_number BETWEEN 1 AND 10),
   content         TEXT NOT NULL CHECK (char_length(content) BETWEEN 1 AND 150),
   author_hash     TEXT NOT NULL,
@@ -53,7 +52,7 @@ CREATE INDEX IF NOT EXISTS entries_reports_idx ON entries (report_count DESC) WH
 -- 4. 신고
 -- ────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS reports (
-  entry_id      BIGINT REFERENCES entries(id) ON DELETE CASCADE,
+  entry_id      BIGINT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
   reporter_hash TEXT NOT NULL,
   reason        TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -72,7 +71,21 @@ CREATE TABLE IF NOT EXISTS banned_words (
 );
 
 -- ────────────────────────────────────────────────────────────────────────────
--- 6. RPC: 슬롯 확보 (트랜잭션 안에서 11번째 차단)
+-- 6. 관리자 로그인 시도 (brute-force 방지)
+-- ────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS admin_login_attempts (
+  id            BIGSERIAL PRIMARY KEY,
+  succeeded     BOOLEAN NOT NULL,
+  source_hash   TEXT,
+  attempted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS admin_login_attempts_time_idx
+  ON admin_login_attempts (attempted_at DESC)
+  WHERE succeeded = false;
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 7. RPC: 슬롯 확보 (트랜잭션 안에서 11번째 차단)
 -- ────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION claim_slot(
   p_day_id      BIGINT,
@@ -85,9 +98,13 @@ AS $$
 DECLARE
   v_slot SMALLINT;
   v_id   BIGINT;
+  v_day_exists BOOLEAN;
 BEGIN
-  -- 같은 day_id에 동시 접근하는 작성자를 직렬화
-  PERFORM 1 FROM days WHERE id = p_day_id FOR UPDATE;
+  -- day_id 존재 확인 + 같은 day_id에 동시 접근하는 작성자를 직렬화
+  SELECT TRUE INTO v_day_exists FROM days WHERE id = p_day_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'day_not_found' USING ERRCODE = 'P0003';
+  END IF;
 
   IF EXISTS (SELECT 1 FROM entries WHERE day_id = p_day_id AND author_hash = p_author_hash) THEN
     RAISE EXCEPTION 'already_written' USING ERRCODE = 'P0001';
@@ -110,7 +127,7 @@ END;
 $$;
 
 -- ────────────────────────────────────────────────────────────────────────────
--- 7. RPC: 신고 (3회 누적 시 가림)
+-- 8. RPC: 신고 (3회 누적 시 가림). 본인 글 자가신고 거절.
 -- ────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION report_entry(
   p_entry_id      BIGINT,
@@ -123,15 +140,24 @@ AS $$
 DECLARE
   v_count INT;
   v_hidden BOOLEAN;
+  v_author TEXT;
 BEGIN
+  SELECT author_hash INTO v_author FROM entries WHERE id = p_entry_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'entry_not_found' USING ERRCODE = 'P0004';
+  END IF;
+  IF v_author = p_reporter_hash THEN
+    RAISE EXCEPTION 'self_report' USING ERRCODE = 'P0005';
+  END IF;
+
   INSERT INTO reports (entry_id, reporter_hash, reason)
   VALUES (p_entry_id, p_reporter_hash, p_reason)
   ON CONFLICT DO NOTHING;
 
+  WITH c AS (SELECT COUNT(*)::int AS n FROM reports WHERE entry_id = p_entry_id)
   UPDATE entries
-    SET report_count = (SELECT COUNT(*) FROM reports WHERE entry_id = p_entry_id),
-        is_hidden    = CASE WHEN (SELECT COUNT(*) FROM reports WHERE entry_id = p_entry_id) >= 3
-                            THEN TRUE ELSE is_hidden END
+    SET report_count = (SELECT n FROM c),
+        is_hidden    = is_hidden OR (SELECT n FROM c) >= 3
     WHERE id = p_entry_id
     RETURNING report_count, is_hidden INTO v_count, v_hidden;
 
@@ -140,14 +166,23 @@ END;
 $$;
 
 -- ────────────────────────────────────────────────────────────────────────────
--- 8. RPC: 일자 + 별자리 보장 (lazy create)
+-- 9. RPC: 일자 + 별자리 보장 (lazy create). days 한 행을 통째로 반환.
+--    이전 버전(BIGINT 반환)이 있을 수 있으니 명시적 DROP.
 -- ────────────────────────────────────────────────────────────────────────────
+DROP FUNCTION IF EXISTS ensure_day(DATE, INT, JSONB);
+
 CREATE OR REPLACE FUNCTION ensure_day(
   p_date_kst   DATE,
   p_day_number INT,
-  p_positions  JSONB    -- [{slot:1,x:..,y:..}, ...]
+  p_positions  JSONB
 )
-RETURNS BIGINT
+RETURNS TABLE(
+  out_id          BIGINT,
+  out_day_number  INT,
+  out_date_kst    DATE,
+  out_opens_at    TIMESTAMPTZ,
+  out_closes_at   TIMESTAMPTZ
+)
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -155,12 +190,8 @@ DECLARE
   v_opens  TIMESTAMPTZ;
   v_closes TIMESTAMPTZ;
 BEGIN
-  SELECT id INTO v_id FROM days WHERE date_kst = p_date_kst;
-  IF FOUND THEN
-    RETURN v_id;
-  END IF;
-
-  v_opens  := (p_date_kst::text || ' 00:00:00 Asia/Seoul')::timestamptz;
+  -- IANA 시간대 안전 캐스트
+  v_opens  := (p_date_kst::timestamp) AT TIME ZONE 'Asia/Seoul';
   v_closes := v_opens + INTERVAL '1 day';
 
   INSERT INTO days (day_number, date_kst, opens_at, closes_at)
@@ -176,9 +207,11 @@ BEGIN
   FROM jsonb_array_elements(p_positions) elem
   ON CONFLICT DO NOTHING;
 
-  RETURN v_id;
+  RETURN QUERY
+    SELECT d.id, d.day_number, d.date_kst, d.opens_at, d.closes_at
+    FROM days d WHERE d.id = v_id;
 END;
 $$;
 
--- Note: Neon 직접 연결은 superuser 권한으로 접속하므로 RLS 미사용.
+-- Note: Neon 직접 연결은 superuser 권한이므로 RLS 미사용.
 -- 모든 쓰기는 Server Action을 통해서만 들어오고, 입력 검증은 애플리케이션 계층에서 처리.

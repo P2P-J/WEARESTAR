@@ -98,6 +98,10 @@ export async function writeEntry(input: {
         message: "오늘의 일기장은 모두 채워졌어요. 내일 0시에 새 일기장이 열려요.",
       };
     }
+    // production 에선 raw DB 메시지 노출 안함
+    if (process.env.NODE_ENV === "production") {
+      return { ok: false, code: "unknown", message: "잠시 후 다시 시도해주세요." };
+    }
     return { ok: false, code: "unknown", message: msg };
   }
 }

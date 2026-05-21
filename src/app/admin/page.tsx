@@ -42,12 +42,14 @@ export default async function AdminPage() {
             REPORTED · HIDDEN · DELETED
           </p>
         </div>
-        <a
-          href="/admin/logout"
-          className="mono text-[11px] tracking-wider2 text-ink-faint hover:text-star transition"
-        >
-          LOGOUT →
-        </a>
+        <form action="/admin/logout" method="post">
+          <button
+            type="submit"
+            className="mono text-[11px] tracking-wider2 text-ink-faint hover:text-star transition"
+          >
+            LOGOUT →
+          </button>
+        </form>
       </header>
       <AdminPanel rows={reported} />
     </div>

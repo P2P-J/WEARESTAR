@@ -63,6 +63,10 @@ function isLatinLower(code: number): boolean {
 /**
  * 입력 문자열을 비교 가능한 정규화 시퀀스로 변환.
  * 매칭에 사용 (substring 비교).
+ *
+ * 마지막 단계에서 연속 동일 문자를 1개로 압축한다.
+ * → "시1발" → 숫자치환 후 "ㅅㅣㅣㅂㅏㄹ" → 압축 후 "ㅅㅣㅂㅏㄹ" 매칭 가능.
+ * → "씨이바알" → "ㅆㅣㅂㅏㄹ" 매칭 가능. (모음 반복 우회 방지)
  */
 export function normalizeForFilter(input: string): string {
   if (!input) return "";
@@ -91,6 +95,10 @@ export function normalizeForFilter(input: string): string {
     if (mapped) out += mapped;
     // 그 외(공백/특수문자/숫자/이모지 등)는 제거
   }
+
+  // 연속 동일 문자 압축 — 우회 패턴 방어
+  out = out.replace(/(.)\1+/g, "$1");
+
   return out;
 }
 

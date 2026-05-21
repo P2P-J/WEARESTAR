@@ -7,6 +7,9 @@ export async function fetchMoreDays(input: {
   beforeDayNumber: number;
   limit?: number;
 }): Promise<DayBundle[]> {
-  const limit = Math.min(Math.max(input.limit ?? 3, 1), 10);
+  if (!Number.isInteger(input.beforeDayNumber) || input.beforeDayNumber < 1) {
+    return [];
+  }
+  const limit = Math.min(Math.max(Number(input.limit ?? 3) | 0, 1), 10);
   return getRecentDayBundles(limit, input.beforeDayNumber);
 }

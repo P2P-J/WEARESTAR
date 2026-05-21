@@ -1,7 +1,9 @@
 // 한 일자의 모든 데이터(일자 메타 + 별 위치 + 작성된 entries)를 묶어서 반환.
+// 중요: 클라이언트로 보내는 Entry 에는 author_hash 가 포함되지 않으며,
+//       is_hidden 인 글의 content 는 서버 단에서 마스킹 후 전송된다.
 
 import { db, isDbConfigured } from "@/lib/db/client";
-import { Day, DayBundle, Entry, StarSlot } from "@/lib/types";
+import { Day, DayBundle, Entry, StarSlot, HIDDEN_CONTENT_MASK } from "@/lib/types";
 import { generatePositions } from "@/lib/day/positions";
 import {
   dayNumberFromDate,
@@ -10,7 +12,8 @@ import {
   dateFromDayNumber,
 } from "@/lib/day/time";
 
-/** 일자 메타가 없으면 생성하고, 별 좌표도 시드해서 day 반환. */
+/** 일자 메타가 없으면 생성하고, 별 좌표도 시드해서 day 반환.
+ *  단일 RPC 호출로 모든 컬럼을 가져온다 (성능 + 일관성). */
 export async function ensureDayByDate(dateKst: string): Promise<Day> {
   const sql = db();
   const dayNumber = dayNumberFromDate(dateKst, launchDate());
@@ -20,23 +23,23 @@ export async function ensureDayByDate(dateKst: string): Promise<Day> {
     y: Number(p.y.toFixed(2)),
   }));
 
-  const ensured = (await sql`
-    SELECT ensure_day(${dateKst}::date, ${dayNumber}::int, ${JSON.stringify(positions)}::jsonb) AS id
-  `) as { id: number }[];
+  const rows = (await sql`
+    SELECT out_id AS id,
+           out_day_number AS day_number,
+           out_date_kst::text AS date_kst,
+           out_opens_at::text AS opens_at,
+           out_closes_at::text AS closes_at
+    FROM ensure_day(${dateKst}::date, ${dayNumber}::int, ${JSON.stringify(positions)}::jsonb)
+  `) as unknown as Day[];
 
-  const dayId = ensured[0]?.id;
-  if (!dayId) throw new Error("ensure_day returned no id");
-
-  const dayRows = (await sql`
-    SELECT id, day_number, date_kst::text AS date_kst, opens_at::text AS opens_at, closes_at::text AS closes_at
-    FROM days WHERE id = ${dayId}::bigint
-  `) as Day[];
-
-  if (!dayRows[0]) throw new Error("day row not found after ensure_day");
-  return dayRows[0];
+  if (!rows[0]) throw new Error("ensure_day returned no row");
+  return rows[0];
 }
 
-/** 일자 묶음(별 위치 + entries) 가져오기. 데이터가 없는 슬롯은 entry=null. */
+/** 일자 묶음(별 위치 + entries) 가져오기. 데이터가 없는 슬롯은 entry=null.
+ *  - author_hash 는 SELECT 에서 제외 (익명성 보호)
+ *  - is_hidden 인 글의 content 는 마스킹 placeholder 로 치환
+ */
 export async function getDayBundleByDate(dateKst: string): Promise<DayBundle> {
   if (!isDbConfigured()) {
     return mockBundleForDate(dateKst);
@@ -52,12 +55,15 @@ export async function getDayBundleByDate(dateKst: string): Promise<DayBundle> {
       WHERE day_id = ${day.id}::bigint
     `,
     sql`
-      SELECT id, day_id, slot_number, content, author_hash,
-             created_at::text AS created_at, report_count, is_hidden, is_deleted
+      SELECT id, day_id, slot_number,
+             CASE WHEN is_hidden THEN ${HIDDEN_CONTENT_MASK} ELSE content END AS content,
+             created_at::text AS created_at,
+             report_count, is_hidden, is_deleted
       FROM entries
       WHERE day_id = ${day.id}::bigint AND is_deleted = false
     `,
   ]);
+
   const positions = positionsRaw as unknown as {
     slot_number: number;
     x_pct: number;
@@ -128,7 +134,6 @@ function mockBundleForDate(dateKst: string): DayBundle {
         day_id: 0,
         slot_number: p.slot,
         content: m.text,
-        author_hash: p.slot === 3 ? "self-demo" : "demo",
         created_at: created,
         report_count: 0,
         is_hidden: false,
@@ -136,13 +141,15 @@ function mockBundleForDate(dateKst: string): DayBundle {
       },
     };
   });
+  const nextDay = new Date(`${dateKst}T00:00:00+09:00`);
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
   return {
     day: {
       id: 0,
       day_number: dayNumber,
       date_kst: dateKst,
       opens_at: `${dateKst}T00:00:00+09:00`,
-      closes_at: `${dateKst}T24:00:00+09:00`,
+      closes_at: nextDay.toISOString(),
     },
     slots,
   };

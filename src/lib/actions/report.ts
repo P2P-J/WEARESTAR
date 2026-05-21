@@ -34,6 +34,16 @@ export async function reportEntry(input: {
       isHidden: row?.out_is_hidden ?? false,
     };
   } catch (e: unknown) {
-    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("self_report")) {
+      return { ok: false, message: "본인 글은 신고할 수 없어요." };
+    }
+    if (msg.includes("entry_not_found")) {
+      return { ok: false, message: "이미 사라진 글이에요." };
+    }
+    if (process.env.NODE_ENV === "production") {
+      return { ok: false, message: "잠시 후 다시 시도해주세요." };
+    }
+    return { ok: false, message: msg };
   }
 }
