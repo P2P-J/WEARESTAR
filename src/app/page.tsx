@@ -31,6 +31,7 @@ export default async function Home() {
       <Footer
         archiveLabel={`ARCHIVE · 001 – ${String(bundle.day.day_number).padStart(3, "0")}`}
         totalLines={totalLines}
+        prevDayNumber={bundle.day.day_number > 1 ? bundle.day.day_number - 1 : null}
       />
     </div>
   );
