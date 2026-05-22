@@ -2,7 +2,7 @@
 
 > **매일 자정, 새 일기장이 열린다. 단 열 사람만 한 줄을 남길 수 있다.**
 
-🌌 **Live →** [wearestar-git-main-p2p-js-projects.vercel.app](https://wearestar-git-main-p2p-js-projects.vercel.app)
+🌌 **Live →** [wearestar.vercel.app](https://wearestar.vercel.app)
 
 이름도 닉네임도 없이, 시각만 남기고 가는 익명 공동 일기장.
 누가 다녀갔는지는 영원히 모르지만, 그날 누군가가 거기 있었다는 흔적만 남는다.
