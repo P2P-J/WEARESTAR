@@ -1,12 +1,22 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
+function safeMetadataBase(raw: string | undefined): URL | undefined {
+  if (!raw) return undefined;
+  const s = raw.trim();
+  if (!s) return undefined;
+  const withScheme = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+  try {
+    return new URL(withScheme);
+  } catch {
+    return undefined;
+  }
+}
+
 export const metadata: Metadata = {
   title: "밤하늘의 별 · 오늘의 일기장",
   description: "매일 자정, 새 일기장이 열린다. 단 열 사람만 한 줄을 남길 수 있다.",
-  metadataBase: process.env.NEXT_PUBLIC_SITE_URL
-    ? new URL(process.env.NEXT_PUBLIC_SITE_URL)
-    : undefined,
+  metadataBase: safeMetadataBase(process.env.NEXT_PUBLIC_SITE_URL),
   openGraph: {
     title: "밤하늘의 별",
     description: "매일 자정, 새 일기장이 열린다. 단 열 사람만 한 줄을 남길 수 있다.",
